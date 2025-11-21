@@ -1,5 +1,6 @@
 import os
 import threading
+from io import BytesIO
 from django.http import FileResponse, JsonResponse
 from django.db.models import Q
 from django.utils import timezone

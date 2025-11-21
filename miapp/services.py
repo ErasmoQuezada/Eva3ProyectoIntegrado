@@ -45,13 +45,31 @@ def process_csv_file(file_content, import_obj, user):
     row_number = 0
     
     try:
-        # Leer CSV
+        # Leer CSV con manejo de encoding
         if isinstance(file_content, bytes):
-            file_content = StringIO(file_content.decode('utf-8'))
+            # Intentar diferentes encodings
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    file_content = StringIO(file_content.decode(encoding))
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                # Si todos fallan, usar utf-8 con errors='replace'
+                file_content = StringIO(file_content.decode('utf-8', errors='replace'))
         elif hasattr(file_content, 'read'):
             content = file_content.read()
             if isinstance(content, bytes):
-                file_content = StringIO(content.decode('utf-8'))
+                # Intentar diferentes encodings
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        file_content = StringIO(content.decode(encoding))
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    # Si todos fallan, usar utf-8 con errors='replace'
+                    file_content = StringIO(content.decode('utf-8', errors='replace'))
             else:
                 file_content.seek(0)
         

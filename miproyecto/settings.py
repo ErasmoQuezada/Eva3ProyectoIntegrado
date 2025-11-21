@@ -95,7 +95,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'db_proyecto',
         'USER': 'root',
-        'PASSWORD': '',  # XAMPP por defecto no tiene contraseña
+        'PASSWORD': '', 
         'HOST': 'localhost',
         'PORT': '3306',
         'OPTIONS': {
@@ -129,9 +129,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'es-es'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Santiago'
 
 USE_I18N = True
 
@@ -201,10 +201,3 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Allow all origins in development (cambiar en producción)
 CORS_ALLOW_ALL_ORIGINS = DEBUG
-
-# Timezone
-TIME_ZONE = 'America/Santiago'
-USE_TZ = True
-
-# Language
-LANGUAGE_CODE = 'es-es'

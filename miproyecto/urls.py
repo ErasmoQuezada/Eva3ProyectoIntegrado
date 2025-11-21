@@ -46,7 +46,8 @@ urlpatterns = [
     path('', include('miapp.urls_frontend')),
 ]
 
-# Servir archivos media en desarrollo
+# Servir archivos media y static en desarrollo
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+    urlpatterns += staticfiles_urlpatterns()
