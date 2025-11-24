@@ -12,6 +12,48 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
+
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    """Serializer para registro de nuevos usuarios"""
+    
+    password = serializers.CharField(write_only=True, min_length=8, style={'input_type': 'password'})
+    password_confirm = serializers.CharField(write_only=True, min_length=8, style={'input_type': 'password'})
+    
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'password_confirm', 'first_name', 'last_name']
+    
+    def validate(self, attrs):
+        """Validar que las contraseñas coincidan"""
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError({
+                'password_confirm': 'Las contraseñas no coinciden'
+            })
+        return attrs
+    
+    def validate_username(self, value):
+        """Validar que el username no exista"""
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('Este nombre de usuario ya está en uso')
+        return value
+    
+    def validate_email(self, value):
+        """Validar que el email no exista"""
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Este correo electrónico ya está en uso')
+        return value
+    
+    def create(self, validated_data):
+        """Crear nuevo usuario"""
+        validated_data.pop('password_confirm')
+        password = validated_data.pop('password')
+        user = User.objects.create_user(
+            password=password,
+            **validated_data
+        )
+        return user
+
+
 class TaxGradeSerializer(serializers.ModelSerializer):
     """Serializer para TaxGrade con información de auditoría"""
     
@@ -38,7 +80,7 @@ class TaxGradeSerializer(serializers.ModelSerializer):
         if value < 2000 or value > 2100:
             raise serializers.ValidationError("El año debe estar entre 2000 y 2100")
         return value
-
+    
 
 class TaxGradeListSerializer(serializers.ModelSerializer):
     """Serializer simplificado para listado de TaxGrade"""

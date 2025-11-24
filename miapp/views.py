@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -16,7 +16,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import TaxGrade, Import, ImportRecord, AuditLog
 from .serializers import (
     TaxGradeSerializer, TaxGradeListSerializer,
-    ImportSerializer, AuditLogSerializer, ImportFileSerializer
+    ImportSerializer, AuditLogSerializer, ImportFileSerializer,
+    UserRegistrationSerializer
 )
 from .services import (
     calculate_file_hash, get_file_type, process_csv_file,
@@ -43,6 +44,39 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class CustomTokenObtainPairView(TokenObtainPairView):
     """Vista personalizada para login JWT"""
     serializer_class = CustomTokenObtainPairSerializer
+
+
+class UserRegistrationView(APIView):
+    """Vista para registro de nuevos usuarios"""
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        """Registrar un nuevo usuario"""
+        serializer = UserRegistrationSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            
+            # Generar tokens JWT para el nuevo usuario
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'message': 'Usuario registrado exitosamente',
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name
+                },
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class TaxGradeViewSet(viewsets.ModelViewSet):
@@ -75,7 +109,16 @@ class TaxGradeViewSet(viewsets.ModelViewSet):
         """Filtros adicionales por query params"""
         queryset = super().get_queryset()
         
-        # Filtro por rango de años
+        # --- INICIO DEL CAMBIO ---
+        # Si el frontend NO está pidiendo un estado específico (ej: buscando 'inactivo'),
+        # entonces filtramos por defecto para mostrar SOLO los 'activo'.
+        # Así, los que marque como 'inactivo' desaparecerán de la lista visualmente.
+        status_param = self.request.query_params.get('status')
+        if not status_param:
+            queryset = queryset.filter(status='activo')
+        # --- FIN DEL CAMBIO ---
+
+        # Filtro por rango de años (Código original)
         year_from = self.request.query_params.get('year_from')
         year_to = self.request.query_params.get('year_to')
         if year_from:
@@ -83,7 +126,7 @@ class TaxGradeViewSet(viewsets.ModelViewSet):
         if year_to:
             queryset = queryset.filter(year__lte=int(year_to))
         
-        # Filtro por rango de fechas
+        # Filtro por rango de fechas (Código original)
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
         if date_from:

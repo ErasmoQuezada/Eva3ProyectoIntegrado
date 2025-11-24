@@ -14,6 +14,9 @@ function setupEventListeners() {
     // Login form
     document.getElementById('loginForm').addEventListener('submit', handleLogin);
     
+    // Register form
+    document.getElementById('registerForm').addEventListener('submit', handleRegister);
+    
     // Import form
     document.getElementById('importForm').addEventListener('submit', handleImport);
     
@@ -96,6 +99,10 @@ async function handleLogin(e) {
     const password = document.getElementById('password').value;
     const errorDiv = document.getElementById('loginError');
     
+    // Limpiar errores previos
+    errorDiv.classList.add('hidden');
+    errorDiv.textContent = '';
+    
     try {
         const response = await fetch(`${API_BASE_URL}/auth/login/`, {
             method: 'POST',
@@ -125,6 +132,121 @@ async function handleLogin(e) {
     }
 }
 
+async function handleRegister(e) {
+    e.preventDefault();
+    const errorDiv = document.getElementById('registerError');
+    const successDiv = document.getElementById('registerSuccess');
+    
+    // Limpiar mensajes previos
+    errorDiv.classList.add('hidden');
+    successDiv.classList.add('hidden');
+    errorDiv.textContent = '';
+    successDiv.textContent = '';
+    
+    const username = document.getElementById('regUsername').value;
+    const email = document.getElementById('regEmail').value;
+    const password = document.getElementById('regPassword').value;
+    const passwordConfirm = document.getElementById('regPasswordConfirm').value;
+    const firstName = document.getElementById('regFirstName').value;
+    const lastName = document.getElementById('regLastName').value;
+    
+    // Validar que las contraseñas coincidan
+    if (password !== passwordConfirm) {
+        errorDiv.textContent = 'Las contraseñas no coinciden';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
+    // Validar longitud mínima de contraseña
+    if (password.length < 8) {
+        errorDiv.textContent = 'La contraseña debe tener al menos 8 caracteres';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/register/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                username,
+                email,
+                password,
+                password_confirm: passwordConfirm,
+                first_name: firstName,
+                last_name: lastName
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.tokens) {
+            // Usuario registrado exitosamente
+            successDiv.textContent = 'Usuario registrado exitosamente. Iniciando sesión...';
+            successDiv.classList.remove('hidden');
+            
+            // Guardar tokens y mostrar la aplicación
+            accessToken = data.tokens.access;
+            refreshToken = data.tokens.refresh;
+            localStorage.setItem('accessToken', accessToken);
+            localStorage.setItem('refreshToken', refreshToken);
+            
+            // Esperar un momento y luego mostrar la app
+            setTimeout(() => {
+                showApp();
+                loadTaxGrades();
+                loadImports();
+            }, 1500);
+        } else {
+            // Mostrar errores de validación
+            let errorMessage = 'Error al registrar usuario';
+            if (data.username) {
+                errorMessage = data.username[0];
+            } else if (data.email) {
+                errorMessage = data.email[0];
+            } else if (data.password) {
+                errorMessage = data.password[0];
+            } else if (data.password_confirm) {
+                errorMessage = data.password_confirm[0];
+            } else if (data.detail) {
+                errorMessage = data.detail;
+            } else if (typeof data === 'object') {
+                errorMessage = JSON.stringify(data);
+            }
+            
+            errorDiv.textContent = errorMessage;
+            errorDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error de conexión: ' + error.message;
+        errorDiv.classList.remove('hidden');
+    }
+}
+
+function showLoginForm() {
+    document.getElementById('loginCard').classList.remove('hidden');
+    document.getElementById('registerCard').classList.add('hidden');
+    // Limpiar formularios
+    document.getElementById('loginForm').reset();
+    document.getElementById('registerForm').reset();
+    document.getElementById('loginError').classList.add('hidden');
+    document.getElementById('registerError').classList.add('hidden');
+    document.getElementById('registerSuccess').classList.add('hidden');
+}
+
+function showRegisterForm() {
+    document.getElementById('loginCard').classList.add('hidden');
+    document.getElementById('registerCard').classList.remove('hidden');
+    // Limpiar formularios
+    document.getElementById('loginForm').reset();
+    document.getElementById('registerForm').reset();
+    document.getElementById('loginError').classList.add('hidden');
+    document.getElementById('registerError').classList.add('hidden');
+    document.getElementById('registerSuccess').classList.add('hidden');
+}
+
 function logout() {
     accessToken = null;
     refreshToken = null;
@@ -141,7 +263,19 @@ function showLogin() {
 function showApp() {
     document.getElementById('loginSection').classList.add('hidden');
     document.getElementById('appSection').classList.remove('hidden');
-    document.getElementById('userInfo').textContent = 'Usuario autenticado';
+    
+    // Obtener información del usuario desde el token (opcional)
+    if (accessToken) {
+        try {
+            // Decodificar el token JWT para obtener el username
+            const payload = JSON.parse(atob(accessToken.split('.')[1]));
+            document.getElementById('userInfo').textContent = `Usuario: ${payload.username}`;
+        } catch (e) {
+            document.getElementById('userInfo').textContent = 'Usuario autenticado';
+        }
+    } else {
+        document.getElementById('userInfo').textContent = 'Usuario autenticado';
+    }
 }
 
 // API Helpers
@@ -245,6 +379,13 @@ function showCreateModal() {
     document.getElementById('modalTitle').textContent = 'Nueva Calificación';
     document.getElementById('taxForm').reset();
     document.getElementById('taxId').value = '';
+    
+    // Establecer valores por defecto
+    document.getElementById('taxSourceType').value = 'manual';
+    document.getElementById('taxStatus').value = 'activo';
+    document.getElementById('taxAmount').value = '0';
+    document.getElementById('taxYear').value = new Date().getFullYear();
+    
     new bootstrap.Modal(document.getElementById('taxModal')).show();
 }
 
@@ -276,18 +417,67 @@ async function editTaxGrade(id) {
 }
 
 async function saveTaxGrade() {
-    const id = document.getElementById('taxId').value;
+    // Validar campos requeridos
+    const rut = document.getElementById('taxRut').value.trim();
+    const name = document.getElementById('taxName').value.trim();
+    const yearValue = document.getElementById('taxYear').value;
+    const sourceType = document.getElementById('taxSourceType').value;
+    const status = document.getElementById('taxStatus').value;
+    
+    // Validaciones básicas
+    if (!rut) {
+        alert('El RUT es requerido');
+        return;
+    }
+    if (!name) {
+        alert('El Nombre es requerido');
+        return;
+    }
+    if (!yearValue) {
+        alert('El Año es requerido');
+        return;
+    }
+    if (!sourceType) {
+        alert('El Tipo es requerido');
+        return;
+    }
+    
+    // Validar año
+    const year = parseInt(yearValue);
+    if (isNaN(year) || year < 2000 || year > 2100) {
+        alert('El año debe ser un número entre 2000 y 2100');
+        return;
+    }
+    
+    // Preparar datos
+    const amountValue = document.getElementById('taxAmount').value;
+    const amount = amountValue ? parseFloat(amountValue) : 0;
+    if (isNaN(amount)) {
+        alert('El Monto debe ser un número válido');
+        return;
+    }
+    
+    const factorValue = document.getElementById('taxFactor').value;
+    const factor = factorValue && factorValue.trim() ? parseFloat(factorValue) : null;
+    if (factorValue && factorValue.trim() && isNaN(factor)) {
+        alert('El Factor debe ser un número válido');
+        return;
+    }
+    
+    const calculationBasis = document.getElementById('taxCalculationBasis').value.trim();
+    
     const data = {
-        rut: document.getElementById('taxRut').value,
-        name: document.getElementById('taxName').value,
-        year: parseInt(document.getElementById('taxYear').value),
-        source_type: document.getElementById('taxSourceType').value,
-        status: document.getElementById('taxStatus').value,
-        amount: parseFloat(document.getElementById('taxAmount').value) || 0,
-        factor: document.getElementById('taxFactor').value ? parseFloat(document.getElementById('taxFactor').value) : null,
-        calculation_basis: document.getElementById('taxCalculationBasis').value
+        rut: rut,
+        name: name,
+        year: year,
+        source_type: sourceType,
+        status: status,
+        amount: amount,
+        factor: factor,
+        calculation_basis: calculationBasis
     };
     
+    const id = document.getElementById('taxId').value;
     const url = id ? `${API_BASE_URL}/tax-grades/${id}/` : `${API_BASE_URL}/tax-grades/`;
     const method = id ? 'PUT' : 'POST';
     
@@ -298,16 +488,37 @@ async function saveTaxGrade() {
             body: JSON.stringify(data)
         });
         
+        const responseData = await response.json();
+        
         if (response.ok) {
             bootstrap.Modal.getInstance(document.getElementById('taxModal')).hide();
             loadTaxGrades(currentPage);
             alert('Calificación guardada exitosamente');
         } else {
-            const error = await response.json();
-            alert('Error: ' + (error.detail || JSON.stringify(error)));
+            // Mostrar errores de validación de forma más clara
+            let errorMessage = 'Error al guardar: ';
+            if (responseData.detail) {
+                errorMessage += responseData.detail;
+            } else if (responseData.non_field_errors) {
+                errorMessage += responseData.non_field_errors.join(', ');
+            } else {
+                // Mostrar errores de campos específicos
+                const fieldErrors = [];
+                for (const [field, errors] of Object.entries(responseData)) {
+                    if (Array.isArray(errors)) {
+                        fieldErrors.push(`${field}: ${errors.join(', ')}`);
+                    } else {
+                        fieldErrors.push(`${field}: ${errors}`);
+                    }
+                }
+                errorMessage += fieldErrors.join(' | ');
+            }
+            alert(errorMessage);
+            console.error('Error response:', responseData);
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        alert('Error de conexión: ' + error.message);
+        console.error('Error:', error);
     }
 }
 

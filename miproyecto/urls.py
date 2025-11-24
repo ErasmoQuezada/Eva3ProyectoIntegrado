@@ -25,7 +25,8 @@ from miapp.views import (
     TaxGradeViewSet,
     ImportViewSet,
     AuditLogViewSet,
-    CustomTokenObtainPairView
+    CustomTokenObtainPairView,
+    UserRegistrationView
 )
 
 # Router para ViewSets
@@ -38,6 +39,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     
     # API endpoints (deben ir antes del frontend para que tengan prioridad)
+    path('api/auth/register/', UserRegistrationView.as_view(), name='user_register'),
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/', include(router.urls)),
