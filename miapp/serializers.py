@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import TaxGrade, Import, ImportRecord, AuditLog
+from .models import TaxGrade, Import, ImportRecord, AuditLog, DividendMaintainer
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -63,11 +63,11 @@ class TaxGradeSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaxGrade
         fields = [
-            'id', 'rut', 'name', 'year', 'source_type', 'amount', 'factor',
+            'id', 'rut', 'name', 'year', 'source_type', 'fuente_ingreso', 'amount', 'factor',
             'calculation_basis', 'status', 'created_by', 'created_by_username',
             'created_at', 'updated_by', 'updated_by_username', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'fuente_ingreso']  # fuente_ingreso es de solo lectura
     
     def validate_rut(self, value):
         """Validar formato de RUT"""
@@ -87,7 +87,7 @@ class TaxGradeListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = TaxGrade
-        fields = ['id', 'rut', 'name', 'year', 'source_type', 'amount', 'status']
+        fields = ['id', 'rut', 'name', 'year', 'source_type', 'fuente_ingreso', 'amount', 'status']
 
 
 class ImportRecordSerializer(serializers.ModelSerializer):
@@ -165,3 +165,47 @@ class ImportFileSerializer(serializers.Serializer):
         
         return value
 
+
+class DividendMaintainerSerializer(serializers.ModelSerializer):
+    """Serializer para DividendMaintainer con información de auditoría"""
+    
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    updated_by_username = serializers.CharField(source='updated_by.username', read_only=True)
+    
+    class Meta:
+        model = DividendMaintainer
+        fields = [
+            'id', 'tipo_mercado', 'origen_informacion', 'periodo_comercial',
+            'instrumento', 'fecha_pago_dividendo', 'descripcion_dividendo',
+            'secuencia_evento_capital', 'acogido_isfut_isift', 'origen',
+            'factor_actualizacion', 'factores_8_37', 'dividendo', 'valor_historico',
+            'campos_detallados_sii',
+            'created_by', 'created_by_username', 'created_at',
+            'updated_by', 'updated_by_username', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_periodo_comercial(self, value):
+        """Validar periodo comercial"""
+        if value < 2000 or value > 2100:
+            raise serializers.ValidationError("El periodo comercial debe estar entre 2000 y 2100")
+        return value
+    
+    def validate_factores_8_37(self, value):
+        """Validar que factores_8_37 sea un diccionario"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Los factores deben ser un objeto JSON")
+        return value
+
+
+class DividendMaintainerListSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para listado de DividendMaintainer"""
+    
+    class Meta:
+        model = DividendMaintainer
+        fields = [
+            'id', 'periodo_comercial', 'instrumento', 'fecha_pago_dividendo',
+            'descripcion_dividendo', 'secuencia_evento_capital', 'acogido_isfut_isift',
+            'origen', 'factor_actualizacion', 'factores_8_37', 'tipo_mercado', 'origen_informacion',
+            'dividendo', 'valor_historico', 'campos_detallados_sii'
+        ]

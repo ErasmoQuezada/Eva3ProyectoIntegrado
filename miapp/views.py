@@ -13,16 +13,18 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django_filters.rest_framework import DjangoFilterBackend
 
-from .models import TaxGrade, Import, ImportRecord, AuditLog
+from .models import TaxGrade, Import, ImportRecord, AuditLog, DividendMaintainer
 from .serializers import (
     TaxGradeSerializer, TaxGradeListSerializer,
     ImportSerializer, AuditLogSerializer, ImportFileSerializer,
-    UserRegistrationSerializer
+    UserRegistrationSerializer,
+    DividendMaintainerSerializer, DividendMaintainerListSerializer
 )
 from .services import (
     calculate_file_hash, get_file_type, process_csv_file,
     process_zip_file, process_pdf_file, process_excel_file,
-    generate_import_report
+    generate_import_report, detect_file_type_by_columns,
+    process_dividend_csv, process_dividend_excel
 )
 from django.conf import settings
 import logging
@@ -138,6 +140,10 @@ class TaxGradeViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Crear TaxGrade y registrar auditoría"""
+        # Si no se especifica fuente_ingreso, marcar como manual
+        if 'fuente_ingreso' not in serializer.validated_data or not serializer.validated_data.get('fuente_ingreso'):
+            serializer.validated_data['fuente_ingreso'] = 'manual'
+        
         tax_grade = serializer.save(
             created_by=self.request.user,
             updated_by=self.request.user
@@ -159,6 +165,11 @@ class TaxGradeViewSet(viewsets.ModelViewSet):
         """Actualizar TaxGrade y registrar auditoría"""
         instance = self.get_object()
         before = self._serialize_model(instance)
+        
+        # Preservar fuente_ingreso original (no se puede cambiar desde el frontend)
+        # El campo es read_only en el serializer, pero por seguridad lo preservamos aquí también
+        if 'fuente_ingreso' in serializer.validated_data:
+            serializer.validated_data['fuente_ingreso'] = instance.fuente_ingreso
         
         tax_grade = serializer.save(updated_by=self.request.user)
         after = self._serialize_model(tax_grade)
@@ -242,6 +253,7 @@ class TaxGradeViewSet(viewsets.ModelViewSet):
             'name': instance.name,
             'year': instance.year,
             'source_type': instance.source_type,
+            'fuente_ingreso': instance.fuente_ingreso,
             'amount': str(instance.amount),
             'status': instance.status,
         }
@@ -338,10 +350,38 @@ class ImportViewSet(viewsets.ModelViewSet):
                 
                 uploaded_file.seek(0)  # Reset para procesamiento
                 
+                # Detectar tipo de archivo (dividendos o tax grades)
                 if file_type == 'csv':
-                    success_count, errors = process_csv_file(
-                        uploaded_file, import_obj, request.user
-                    )
+                    # Leer headers para detectar tipo
+                    import csv
+                    from io import StringIO
+                    csv_content = uploaded_file.read()
+                    uploaded_file.seek(0)
+                    
+                    # Intentar decodificar
+                    for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                        try:
+                            csv_text = csv_content.decode(encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    else:
+                        csv_text = csv_content.decode('utf-8', errors='replace')
+                    
+                    reader = csv.DictReader(StringIO(csv_text))
+                    headers = [h.lower().strip() for h in reader.fieldnames or []]
+                    file_content_type = detect_file_type_by_columns(headers)
+                    
+                    uploaded_file.seek(0)  # Reset again
+                    
+                    if file_content_type == 'dividend':
+                        success_count, errors = process_dividend_csv(
+                            uploaded_file, import_obj, request.user
+                        )
+                    else:
+                        success_count, errors = process_csv_file(
+                            uploaded_file, import_obj, request.user
+                        )
                 elif file_type == 'zip':
                     success_count, errors = process_zip_file(
                         BytesIO(file_content), import_obj, request.user
@@ -351,9 +391,22 @@ class ImportViewSet(viewsets.ModelViewSet):
                         BytesIO(file_content), import_obj, request.user
                     )
                 elif file_type == 'xlsx':
-                    success_count, errors = process_excel_file(
-                        BytesIO(file_content), import_obj, request.user
-                    )
+                    # Leer headers para detectar tipo
+                    import pandas as pd
+                    df = pd.read_excel(BytesIO(file_content), nrows=0)
+                    headers = [h.lower().strip() for h in df.columns]
+                    file_content_type = detect_file_type_by_columns(headers)
+                    
+                    uploaded_file.seek(0)  # Reset
+                    
+                    if file_content_type == 'dividend':
+                        success_count, errors = process_dividend_excel(
+                            BytesIO(file_content), import_obj, request.user
+                        )
+                    else:
+                        success_count, errors = process_excel_file(
+                            BytesIO(file_content), import_obj, request.user
+                        )
                 else:
                     errors.append(f"Tipo de archivo no soportado: {file_type}")
                 
@@ -454,3 +507,133 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(timestamp__lte=date_to)
         
         return queryset
+
+
+class DividendMaintainerViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para DividendMaintainer con CRUD completo y filtros.
+    
+    Endpoints:
+    - GET /api/dividend-maintainers/ - Listar con filtros
+    - GET /api/dividend-maintainers/{id}/ - Detalle
+    - POST /api/dividend-maintainers/ - Crear
+    - PUT /api/dividend-maintainers/{id}/ - Actualizar
+    - DELETE /api/dividend-maintainers/{id}/ - Eliminar
+    """
+    
+    queryset = DividendMaintainer.objects.all()
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['tipo_mercado', 'origen_informacion', 'periodo_comercial', 'origen']
+    search_fields = ['instrumento', 'descripcion_dividendo']
+    ordering_fields = ['periodo_comercial', 'fecha_pago_dividendo', 'instrumento']
+    ordering = ['-periodo_comercial', 'instrumento', 'fecha_pago_dividendo']
+    
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return DividendMaintainerListSerializer
+        return DividendMaintainerSerializer
+    
+    def get_queryset(self):
+        """Filtros adicionales por query params"""
+        queryset = super().get_queryset()
+        
+        # Filtro por tipo de mercado
+        tipo_mercado = self.request.query_params.get('tipo_mercado')
+        if tipo_mercado:
+            queryset = queryset.filter(tipo_mercado=tipo_mercado)
+        
+        # Filtro por origen de información
+        origen_informacion = self.request.query_params.get('origen_informacion')
+        if origen_informacion:
+            queryset = queryset.filter(origen_informacion=origen_informacion)
+        
+        # Filtro por periodo comercial
+        periodo_comercial = self.request.query_params.get('periodo_comercial')
+        if periodo_comercial:
+            try:
+                queryset = queryset.filter(periodo_comercial=int(periodo_comercial))
+            except ValueError:
+                pass
+        
+        return queryset
+    
+    def perform_create(self, serializer):
+        """Crear DividendMaintainer y registrar auditoría"""
+        dividend = serializer.save(
+            created_by=self.request.user,
+            updated_by=self.request.user
+        )
+        
+        # Registrar auditoría
+        AuditLog.objects.create(
+            user_id=self.request.user,
+            entity='dividend_maintainers',
+            entity_id=str(dividend.id),
+            action='create',
+            after=self._serialize_model(dividend),
+            ip_address=self._get_client_ip(),
+            user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
+            timestamp=timezone.now()
+        )
+    
+    def perform_update(self, serializer):
+        """Actualizar DividendMaintainer y registrar auditoría"""
+        instance = self.get_object()
+        before = self._serialize_model(instance)
+        
+        dividend = serializer.save(updated_by=self.request.user)
+        after = self._serialize_model(dividend)
+        
+        # Registrar auditoría
+        AuditLog.objects.create(
+            user_id=self.request.user,
+            entity='dividend_maintainers',
+            entity_id=str(dividend.id),
+            action='update',
+            before=before,
+            after=after,
+            ip_address=self._get_client_ip(),
+            user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
+            timestamp=timezone.now()
+        )
+    
+    def perform_destroy(self, instance):
+        """Eliminar DividendMaintainer y registrar auditoría"""
+        before = self._serialize_model(instance)
+        
+        # Registrar auditoría antes de eliminar
+        AuditLog.objects.create(
+            user_id=self.request.user,
+            entity='dividend_maintainers',
+            entity_id=str(instance.id),
+            action='delete',
+            before=before,
+            after=None,
+            ip_address=self._get_client_ip(),
+            user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
+            timestamp=timezone.now()
+        )
+        
+        instance.delete()
+    
+    def _serialize_model(self, instance):
+        """Serializar instancia para auditoría"""
+        return {
+            'id': str(instance.id),
+            'tipo_mercado': instance.tipo_mercado,
+            'origen_informacion': instance.origen_informacion,
+            'periodo_comercial': instance.periodo_comercial,
+            'instrumento': instance.instrumento,
+            'fecha_pago_dividendo': str(instance.fecha_pago_dividendo),
+            'origen': instance.origen,
+        }
+    
+    def _get_client_ip(self):
+        """Obtener IP del cliente"""
+        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = self.request.META.get('REMOTE_ADDR')
+        return ip

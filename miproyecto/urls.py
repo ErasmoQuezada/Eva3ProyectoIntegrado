@@ -25,6 +25,7 @@ from miapp.views import (
     TaxGradeViewSet,
     ImportViewSet,
     AuditLogViewSet,
+    DividendMaintainerViewSet,
     CustomTokenObtainPairView,
     UserRegistrationView
 )
@@ -34,6 +35,7 @@ router = DefaultRouter()
 router.register(r'tax-grades', TaxGradeViewSet, basename='taxgrade')
 router.register(r'imports', ImportViewSet, basename='import')
 router.register(r'audit-logs', AuditLogViewSet, basename='auditlog')
+router.register(r'dividend-maintainers', DividendMaintainerViewSet, basename='dividendmaintainer')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

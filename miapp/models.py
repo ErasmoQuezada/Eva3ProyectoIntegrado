@@ -15,6 +15,12 @@ class TaxGrade(models.Model):
         ('calculo', 'Cálculo'),
     ]
     
+    INGRESO_SOURCE_CHOICES = [
+        ('archivo', 'Archivo de Carga'),
+        ('manual', 'Ingreso Manual'),
+        ('sistema', 'Proveniente del Sistema'),
+    ]
+    
     STATUS_CHOICES = [
         ('activo', 'Activo'),
         ('inactivo', 'Inactivo'),
@@ -25,6 +31,7 @@ class TaxGrade(models.Model):
     name = models.CharField(max_length=255)
     year = models.IntegerField(db_index=True, help_text="Ejercicio fiscal (2023, 2024, ...)")
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, db_index=True)
+    fuente_ingreso = models.CharField(max_length=20, choices=INGRESO_SOURCE_CHOICES, default='manual', db_index=True, help_text="Fuente de ingreso de la calificación")
     amount = models.DecimalField(max_digits=15, decimal_places=2, help_text="Monto dividendos u otro valor")
     factor = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True, help_text="Factor si aplica")
     calculation_basis = models.TextField(blank=True, help_text="Descripción / fórmulas usadas")
@@ -41,6 +48,7 @@ class TaxGrade(models.Model):
         indexes = [
             models.Index(fields=['rut', 'year']),  # Índice compuesto para búsquedas rápidas
             models.Index(fields=['source_type']),
+            models.Index(fields=['fuente_ingreso']),
             models.Index(fields=['status']),
             models.Index(fields=['year']),
         ]
@@ -146,3 +154,70 @@ class AuditLog(models.Model):
     
     def __str__(self):
         return f"{self.action} {self.entity} by {self.user_id} at {self.timestamp}"
+
+
+class DividendMaintainer(models.Model):
+    """Modelo para mantenedor de dividendos"""
+    
+    MARKET_TYPE_CHOICES = [
+        ('acciones', 'Acciones'),
+        ('cfi', 'CFI'),
+        ('fondos_mutuos', 'Fondos Mutuos'),
+    ]
+    
+    ORIGIN_CHOICES = [
+        ('corredora', 'Corredora'),
+        ('sistema', 'Sistema'),
+    ]
+    
+    ISFUT_ISIFT_CHOICES = [
+        ('isfut', 'ISFUT'),
+        ('isift', 'ISIFT'),
+        ('ninguno', 'Ninguno'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Filtros
+    tipo_mercado = models.CharField(max_length=20, choices=MARKET_TYPE_CHOICES, db_index=True, help_text="Tipo de mercado")
+    origen_informacion = models.CharField(max_length=20, choices=ORIGIN_CHOICES, db_index=True, help_text="Origen de la información")
+    periodo_comercial = models.IntegerField(db_index=True, help_text="Año del periodo comercial")
+    
+    # Campos de la grilla
+    instrumento = models.CharField(max_length=255, help_text="Instrumento financiero")
+    fecha_pago_dividendo = models.DateField(help_text="Fecha de pago del dividendo")
+    descripcion_dividendo = models.TextField(blank=True, help_text="Descripción del dividendo")
+    secuencia_evento_capital = models.IntegerField(null=True, blank=True, help_text="Secuencia del evento de capital")
+    acogido_isfut_isift = models.CharField(max_length=10, choices=ISFUT_ISIFT_CHOICES, default='ninguno', help_text="Acogido a ISFUT/ISIFT")
+    origen = models.CharField(max_length=20, choices=ORIGIN_CHOICES, help_text="Origen (corredora o sistema)")
+    factor_actualizacion = models.DecimalField(max_digits=15, decimal_places=6, null=True, blank=True, help_text="Factor de actualización")
+    dividendo = models.DecimalField(max_digits=15, decimal_places=2, default=0, help_text="Dividendo")
+    valor_historico = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, help_text="Valor histórico")
+    
+    # Campos detallados del SII (29 campos según homologación)
+    campos_detallados_sii = models.JSONField(default=dict, blank=True, help_text="29 campos detallados del certificado SII")
+    
+    # Factores del 8 al 37 (almacenados como JSON)
+    factores_8_37 = models.JSONField(default=dict, blank=True, help_text="Factores del 8 al 37 con sus nombres")
+    
+    # Campos de auditoría
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='dividend_maintainers_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='dividend_maintainers_updated')
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'dividend_maintainers'
+        indexes = [
+            models.Index(fields=['tipo_mercado', 'origen_informacion', 'periodo_comercial']),
+            models.Index(fields=['periodo_comercial']),
+            models.Index(fields=['tipo_mercado']),
+            models.Index(fields=['origen_informacion']),
+            models.Index(fields=['instrumento']),
+            # Índice compuesto para la llave única de actualización
+            models.Index(fields=['periodo_comercial', 'instrumento', 'fecha_pago_dividendo', 'secuencia_evento_capital'], name='dividend_unique_key_idx'),
+        ]
+        ordering = ['-periodo_comercial', 'instrumento', 'fecha_pago_dividendo']
+    
+    def __str__(self):
+        return f"{self.instrumento} - {self.periodo_comercial} - {self.fecha_pago_dividendo}"
